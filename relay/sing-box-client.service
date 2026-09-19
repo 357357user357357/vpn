@@ -1,0 +1,12 @@
+[Unit]
+Description=sing-box client bridge (relay to foreign exit)
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=xray exit service (foreign exit for RU relay)
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/xray run -c /usr/local/etc/xray/config.json
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

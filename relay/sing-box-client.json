@@ -1,0 +1,13 @@
+{
+  "log": {"level": "warn"},
+  "inbounds": [{"type": "socks", "tag": "socks-in", "listen": "127.0.0.1", "listen_port": 10809}],
+  "outbounds": [{
+    "type": "vless", "tag": "to-main", "server": "<MAIN_IP>", "server_port": 39443,
+    "uuid": "<EXIT_UUID>", "flow": "",
+    "tls": {
+      "enabled": true, "server_name": "flexchat.top",
+      "utls": {"enabled": true, "fingerprint": "chrome"},
+      "reality": {"enabled": true, "public_key": "<EXIT_PUBLIC_KEY>", "short_id": "<EXIT_SHORT_ID>"}
+    }
+  }]
+}
