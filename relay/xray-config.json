@@ -40,8 +40,11 @@
     {"protocol": "blackhole", "tag": "blocked"}
   ],
   "routing": {
+    "domainStrategy": "IPIfNonMatch",
     "rules": [
-      {"type": "field", "ip": ["<RELAY_IP>"], "outboundTag": "direct"}
+      {"type": "field", "ip": ["<RELAY_IP>"], "outboundTag": "direct"},
+      {"type": "field", "domain": ["geosite:category-ru"], "outboundTag": "direct"},
+      {"type": "field", "ip": ["geoip:ru", "geoip:private"], "outboundTag": "direct"}
     ]
   }
 }

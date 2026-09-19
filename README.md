@@ -11,8 +11,9 @@ phone / PC (vless+REALITY client, params unchanged)
    │
    ▼
 RU relay (<RELAY_IP>) — xray :443  [phone-facing inbound, vless+REALITY]
-   │  routing: dest <RELAY_IP> → direct   (Nextcloud stays local/fast)
-   │  everything else → outbound "to-main"
+   │  routing: <RELAY_IP> → direct (Nextcloud local/fast)
+   │           RU sites (geosite:category-ru / geoip:ru) → direct (RU speed)
+   │           everything else → outbound "to-main"
    ▼
 socks 127.0.0.1:10809 — sing-box client bridge (systemd: sing-box-client)
    │  vless+REALITY to <MAIN_IP>:39443, SNI flexchat.top, uTLS chrome
@@ -68,12 +69,64 @@ Camouflage: relay inbound dest/SNI `kz-ala-1.blook.network:443`; main inbound de
    - xray: latest from `https://github.com/XTLS/Xray-core/releases` (verify zip size — wrong repo 404s into a tiny broken zip).
    - sing-box 1.12.x on relay (any ≥1.12 works for this bridge).
 2. Generate a fresh REALITY keypair **on the target server**:
-   - `xray x25519` prints private + public key.
-   - Gotcha: on 25.12.8 `xray x25519 -i <priv>` prints "Password/Hash32", not the plain public key. Derive the public key with openssl instead:
-     `openssl pkey -in <(echo '-----BEGIN PRIVATE KEY-----'; xray x25519 | awk '/Private/{print $2}' | base64 -d | base64 -w0; printf '\n-----END PRIVATE KEY-----\n') -pubout | grep -v -- '---' | base64 | tr -d '=\n'`
+   - `xray x25519` prints private + public key (URLSAFE base64, no padding).
+   - Gotcha: on 25.12.8 `xray x25519 -i <priv>` prints "Password/Hash32", not
+     the plain public key. Derive it reliably from the private key (Python,
+     verified 2026-09-19 — the private key is the 32-byte x25519 seed; wrap it
+     in a PKCS8 PEM, let openssl export the SPKI, take the last 32 bytes):
+     ```bash
+     python3 - <<'PY'
+     import base64, subprocess
+     priv = "<RELAY_PRIVATE_KEY>"  # 43-char urlsafe b64 from xray x25519
+     raw = base64.urlsafe_b64decode(priv + "=" * (-len(priv) % 4))
+     der = bytes.fromhex("302e020100300506032b656e04220420") + raw
+     open("/tmp/k.pem", "w").write("-----BEGIN PRIVATE KEY-----\n"
+         + base64.encodebytes(der).decode() + "-----END PRIVATE KEY-----\n")
+     spki = subprocess.run(["openssl", "pkey", "-in", "/tmp/k.pem",
+                            "-pubout", "-outform", "DER"],
+                           capture_output=True).stdout
+     print(base64.urlsafe_b64encode(spki[-32:]).decode().rstrip("="))
+     PY
+     ```
 3. Fill the placeholders in the configs, copy to the paths above, `systemctl daemon-reload && systemctl enable --now xray sing-box-client` (relay) / `xray-main` (main).
 4. Relay routing rule: `{"type":"field","ip":["<RELAY_IP>"],"outboundTag":"direct"}` keeps Nextcloud local. Main routing rule pins its own IP to `direct` (loop protection).
 5. Firewall: relay open 80,443 (8000 for batch-chat when applicable); main open 22,443,39443,8000.
+
+## Split routing — Russian sites go direct (added 2026-09-19)
+
+Requirement: at work abroad-networks, foreign sites are blocked while Russian
+addresses work — so the phone connects to the relay and the relay sends
+**Russian traffic out with its own (RU) IP**, while everything else rides the
+chain and exits as `<MAIN_IP>` (secure-VPN behavior for the blocked part).
+
+Relay `routing` (geoip/geosite data lives in `/usr/local/share/xray/`):
+
+```json
+"domainStrategy": "IPIfNonMatch",
+"rules": [
+  {"type": "field", "ip": ["<RELAY_IP>"], "outboundTag": "direct"},
+  {"type": "field", "domain": ["geosite:category-ru"], "outboundTag": "direct"},
+  {"type": "field", "ip": ["geoip:ru", "geoip:private"], "outboundTag": "direct"}
+]
+```
+
+- `geosite:category-ru` matches Russian domains; `IPIfNonMatch` then resolves
+  unmatched domains so `geoip:ru` catches RU-hosted IPs too. `geoip:private`
+  keeps LAN traffic direct.
+- Deploy: edit the relay's `/usr/local/etc/xray/config.json` the same way,
+  `xray run -test -c /usr/local/etc/xray/config.json`, then
+  `systemctl restart xray`.
+- Verify through the full chain (temp vless client from `e2e-test.sh`):
+  `curl --socks5-hostname 127.0.0.1:10808 https://2ip.ru` → `<RELAY_IP>` (RU
+  site, direct) while `curl --socks5-hostname 127.0.0.1:10808
+  https://api.ipify.org` → `<MAIN_IP>` (foreign site, via the exit).
+
+## Mobile browser / other apps
+
+The phone's vless+REALITY client (v2rayNG, Hiddify, …) runs as a **system-wide
+VPN**, so every app — Chrome, Firefox, whatever — automatically rides the
+chain with the split rules above; no per-app setup or extra proxy port needed.
+Desktop browsers work the same through the PC client.
 
 ## E2E tests
 
