@@ -5,6 +5,9 @@
 set -u
 RELAY=${1:-root@RELAY_IP}
 MAIN=${2:-root@MAIN_IP}
+# Expected foreign-exit IP (the main server's IP) — sanitized default matches
+# nothing on purpose; pass EXPECTED_EXIT_IP=<main ip> for real checks.
+EXPECTED=${EXPECTED_EXIT_IP:-MAIN_IP}
 pass=0; fail=0
 chk() { if [ "$2" = "$3" ]; then echo "PASS: $1"; pass=$((pass+1)); else echo "FAIL: $1 (got '$2', want '$3')"; fail=$((fail+1)); fi; }
 
@@ -14,7 +17,7 @@ ssh -o ConnectTimeout=15 "$MAIN" "systemctl is-active xray-main" >/dev/null && e
 
 echo "== hop 1: relay bridge -> main exit (expect MAIN exit IP) =="
 ip1=$(ssh -o ConnectTimeout=15 "$RELAY" "curl -s --socks5-hostname 127.0.0.1:10809 --max-time 12 https://api.ipify.org")
-chk "bridge exit ip" "$ip1" "MAIN_IP"
+chk "bridge exit ip" "$ip1" "$EXPECTED"
 
 echo "== hop 2: full chain via temp vless client on relay (expect MAIN exit IP) =="
 # Temp client: xray run -c /tmp/xray-test-client.json with:
@@ -24,7 +27,7 @@ echo "== hop 2: full chain via temp vless client on relay (expect MAIN exit IP) 
 if ssh "$RELAY" "test -f /tmp/xray-test-client.json"; then
   ssh "$RELAY" "setsid nohup xray run -c /tmp/xray-test-client.json >/tmp/xr-cl.log 2>&1 </dev/null & sleep 2"
   ip2=$(ssh -o ConnectTimeout=15 "$RELAY" "curl -s --socks5-hostname 127.0.0.1:10808 --max-time 15 https://api.ipify.org")
-  chk "full-chain exit ip" "$ip2" "MAIN_IP"
+  chk "full-chain exit ip" "$ip2" "$EXPECTED"
   code=$(ssh -o ConnectTimeout=15 "$RELAY" "curl -s --socks5-hostname 127.0.0.1:10808 --max-time 15 -o /dev/null -w '%{http_code}' https://flexchat.top/health")
   chk "flexchat.top/health via chain" "$code" "200"
   ssh "$RELAY" "pkill -f 'xr[a]y run -c /tmp/xray-test-client.json' 2>/dev/null" # careful pattern, never bare pkill -f xray
