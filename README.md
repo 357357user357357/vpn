@@ -3,6 +3,7 @@
 VPN-style forwarding chain: RU relay → foreign exit on the main server. Phone/PC clients connect to the **relay** (existing config, unchanged); all traffic except Nextcloud exits through the **main server**.
 
 Repos are kept **public — all secrets are sanitized**. Real values live only on the servers (paths listed below).
+Camouflage domains are placeholders here (the relay camo domain is fictional); the main server's own SNI `flexchat.top` is a real public service name, shown intentionally — real VPN values live server-side only.
 
 ## Topology
 
@@ -25,6 +26,8 @@ freedom outbound (UseIPv4 — main has NO IPv6) → internet
 ```
 
 Verified end-to-end: client through relay exits as `<MAIN_IP>`; `https://flexchat.top/health` returns 200 through the full chain.
+
+The RU relay is a temporary, cost-driven hop — see Migration runbooks below for replacing or dropping it.
 
 ## Components
 
@@ -51,7 +54,7 @@ scripts/e2e-test.sh            → chain health checks (run from admin box)
 | Placeholder | Where the real value lives |
 |---|---|
 | `<RELAY_IP>` | DNS A-record of the relay / any relay shell |
-| `<MAIN_IP>` | DNS A-record of flexchat.top / any main shell |
+| `<MAIN_IP>` | any main shell (no public-DNS linkage documented here on purpose) |
 | `<PHONE_UUID>` | relay: `/usr/local/etc/xray/config.json` → inbounds.clients[0].id |
 | `<PHONE_SHORT_ID>` | relay: same file → inbounds.realitySettings.shortIds[0] |
 | `<PHONE_PUBLIC_KEY>` | derived from relay privateKey (see keygen below); stored in phone client |
@@ -61,7 +64,7 @@ scripts/e2e-test.sh            → chain health checks (run from admin box)
 | `<EXIT_PRIVATE_KEY>` | main: same file → privateKey |
 | `<EXIT_PUBLIC_KEY>` | main: same file → derive via openssl; stored in relay: `/etc/sing-box/config.json` |
 
-Camouflage: relay inbound dest/SNI `kz-ala-1.blook.network:443`; main inbound dest/SNI `flexchat.top:443` (itself — must be reachable **from main**; `kz-ala-1.blook.network` is not, hence the switch).
+Camouflage: relay inbound dest/SNI `<CAMO_RELAY_DOMAIN>:443` (placeholder); main inbound dest/SNI `flexchat.top:443` (itself — must be reachable **from main**; the relay camo domain is not, hence the switch).
 
 ## Rebuild procedure
 
@@ -132,13 +135,46 @@ Desktop browsers work the same through the PC client.
 
 ```bash
 # hop 1: relay bridge → main exit (expect MAIN_IP)
-curl -s --socks5-hostname <RELAY_IP-side localhost>:10809 https://api.ipify.org   # on relay
+curl -s --socks5-hostname 127.0.0.1:10809 --max-time 12 https://api.ipify.org    # (run on the relay)
 ssh relay 'curl -s --socks5-hostname 127.0.0.1:10809 --max-time 12 https://api.ipify.org'
 
 # full chain: temp vless client on relay (socks :10808) pointed at relay:443 with PHONE_* params
 # config recipe in scripts/e2e-test.sh comments; expect exit MAIN_IP and flexchat.top/health = 200
 ./scripts/e2e-test.sh
 ```
+
+`EXPECTED_EXIT_IP=<MAIN_IP> ./scripts/e2e-test.sh` makes the script assert the real exit IP;
+the sanitized default matches nothing on purpose.
+
+## Migration runbooks
+
+### A. Moving the foreign exit to a new main
+
+1. Provision the new main: xray + `xray-main` unit (see Rebuild procedure); firewall open 22,443,39443,8000.
+2. Fresh keys **on the new host**: `xray x25519` → `<NEW_EXIT_PUBLIC_KEY>` + a new short_id (fill the main config; real values server-side).
+3. Fill `main/xray-config.json`; keep the loop-protection rule pinned to the new main's own IP.
+4. Pre-flight **from the new host** — camo dest must present the real cert:
+   `openssl s_client -connect flexchat.top:443 -servername flexchat.top` (fallback-issuer tell-tale `YE1`, see Gotchas).
+5. DNS: drop the A-record TTL well in advance.
+6. Cutover: move the A-record → `<NEW_MAIN_IP>`; update relay `sing-box-client.json` outbound (`server`/`public_key`/`short_id`) and `systemctl restart sing-box-client`.
+7. Verify: `EXPECTED_EXIT_IP=<NEW_MAIN_IP> ./scripts/e2e-test.sh`.
+8. Rollback: repoint sing-box at the old main and restart. Decommission the old main **last**.
+   Phone/PC clients need zero changes — they only ever talk to the relay.
+
+### B. Replacing the temporary RU relay
+
+1. Provision the new relay: xray + `sing-box-client` (see Rebuild procedure); geo data in `/usr/local/share/xray/`; firewall open 80,443 (8000 when applicable).
+2. Fresh relay REALITY keypair + short_id → `<PHONE_PUBLIC_KEY>` (keygen above), `<PHONE_UUID>`, `<PHONE_SHORT_ID>`, `<CAMO_RELAY_DOMAIN>`.
+3. **Client-facing event:** every phone/PC client re-imports the vless profile.
+4. Update relay config: direct-rule IP → `<NEW_RELAY_IP>`, geosite/geoip data, firewall, relay DNS A-record.
+5. Verify: `EXPECTED_EXIT_IP=<MAIN_IP> ./scripts/e2e-test.sh root@<NEW_RELAY_IP> root@<MAIN_IP>` (drop the temp-client json on the new relay first).
+6. Decommission the old relay **last**.
+
+### C. Dropping the relay later
+
+Clients aim straight at the main: `<MAIN_IP>:39443`, vless+REALITY with the `EXIT_*` parameters
+(`uuid=<EXIT_UUID>`, `sid=<EXIT_SHORT_ID>`, `pbk=<EXIT_PUBLIC_KEY>`, SNI flexchat.top). One profile
+re-import per client; the RU-direct split routing no longer applies (everything exits foreign).
 
 ## Gotchas (learned the hard way)
 

@@ -15,9 +15,9 @@
         "security": "reality",
         "realitySettings": {
           "show": false,
-          "dest": "kz-ala-1.blook.network:443",
+          "dest": "<CAMO_RELAY_DOMAIN>:443",
           "xver": 0,
-          "serverNames": ["kz-ala-1.blook.network"],
+          "serverNames": ["<CAMO_RELAY_DOMAIN>"],
           "privateKey": "<RELAY_PRIVATE_KEY>",
           "minClient": "",
           "maxClient": "",
