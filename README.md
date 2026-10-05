@@ -116,6 +116,12 @@ Relay `routing` (geoip/geosite data lives in `/usr/local/share/xray/`):
 - `geosite:category-ru` matches Russian domains; `IPIfNonMatch` then resolves
   unmatched domains so `geoip:ru` catches RU-hosted IPs too. `geoip:private`
   keeps LAN traffic direct.
+- **OpenRouter pin (2026-10-05):** `domain:openrouter.ai → to-main` sits as the
+  **first** rule so OpenRouter always exits as `<MAIN_IP>` and never via the RU
+  IP — its WAF 403s RU-range clients. Verified live: during chain requests to
+  openrouter.ai the relay contacts only the tunnel peer (no direct openrouter
+  IPs), while ya.ru still goes direct; relay-side DNS for openrouter.ai returns
+  bogus A records, which is why the pin matches by SNI/domain, not IP.
 - Deploy: edit the relay's `/usr/local/etc/xray/config.json` the same way,
   `xray run -test -c /usr/local/etc/xray/config.json`, then
   `systemctl restart xray`.

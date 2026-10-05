@@ -42,6 +42,7 @@
   "routing": {
     "domainStrategy": "IPIfNonMatch",
     "rules": [
+      {"type": "field", "domain": ["domain:openrouter.ai"], "outboundTag": "to-main"},
       {"type": "field", "ip": ["<RELAY_IP>"], "outboundTag": "direct"},
       {"type": "field", "domain": ["geosite:category-ru"], "outboundTag": "direct"},
       {"type": "field", "ip": ["geoip:ru", "geoip:private"], "outboundTag": "direct"}
