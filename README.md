@@ -1,5 +1,12 @@
 # vpn
 
+> **STATUS (2026-10-05): VPN REMOVED.** Services stopped and disabled on both
+> servers (`xray` + `sing-box-client` on the relay, `xray-main` on main).
+> Configs archived at `/root/vpn-removed-backup-20261005/` on each server.
+> The phone's v2rayTun app was uninstalled. Everything below is the rebuild
+> runbook — the full chain was verified working (e2e passed=6) right before
+> removal, so it can be stood up again as-is.
+
 VPN-style forwarding chain: RU relay → foreign exit on the main server. Phone/PC clients connect to the **relay** (existing config, unchanged); all traffic except Nextcloud exits through the **main server**.
 
 Repos are kept **public — all secrets are sanitized**. Real values live only on the servers (paths listed below).
