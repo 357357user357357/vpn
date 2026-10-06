@@ -7,13 +7,19 @@
 # tunnel managed by ~/bin/bc-proxy.
 #
 # Russian sites (*.ru/*.su/*.рф), the LAN, and flexchat.top stay DIRECT
-# (that logic lives in https://flexchat.top/proxy.pac).
+# (that logic lives in https://flexchat.top/proxy.pac and is mirrored in the
+# TUN config below).
+#
+# Modes:
+#   TUN (preferred): a sing-box TUN device captures ALL traffic at the IP
+#     layer — running apps (even open browsers) re-route with NO restart.
+#     Needs sudo once per session (same as `sudo hiddify`).
+#   PAC (fallback): system PAC for browsers that follow it; running browsers
+#     need one restart (and snap Chromium needs the launcher override).
 #
 # Usage: bc-vpn            # interactive menu
 #        bc-vpn connect|disconnect|status|ip
-# (Running it as root is never required — the script drops back to the
-# desktop user, because KDE/GNOME proxy settings are per-user. It does NOT
-# touch the `hiddify` app or any other proxy service on this machine.)
+# (It does NOT touch the `hiddify` app or any other proxy service.)
 set -u
 
 PAC_URL="https://flexchat.top/proxy.pac"
@@ -69,6 +75,115 @@ egress() { # prints egress IP seen through the tunnel, or empty
   curl -s --max-time 15 --socks5-hostname 127.0.0.1:1080 https://api.ipify.org 2>/dev/null
 }
 
+# --- TUN mode (no browser restarts needed) ---------------------------------
+SINGBOX="$HOME/.local/bin/bc-singbox"
+SINGBOX_VER=1.11.15
+TUN_CONF="$HOME/.config/bc-vpn/tun.json"
+TUN_LOG=/tmp/bc-tun.log
+
+ensure_singbox() { # download pinned sing-box via our own tunnel if absent
+  [[ -x "$SINGBOX" ]] && return 0
+  echo "==> Fetching sing-box v$SINGBOX_VER (one-time, via tunnel)…"
+  mkdir -p "$HOME/.local/bin"
+  local t; t="$(mktemp -d)" || return 1
+  curl -sL --max-time 180 --socks5-hostname 127.0.0.1:1080 \
+    -o "$t/sb.tgz" \
+    "https://github.com/SagerNet/sing-box/releases/download/v$SINGBOX_VER/sing-box-$SINGBOX_VER-linux-amd64.tar.gz" \
+    && tar -xzf "$t/sb.tgz" -C "$t" \
+    && cp "$t/sing-box-$SINGBOX_VER-linux-amd64/sing-box" "$SINGBOX" \
+    && chmod +x "$SINGBOX"
+  local rc=$?
+  rm -rf "$t"
+  return $rc
+}
+
+write_tun_conf() { # config mirroring the PAC: RU/LAN/flexchat direct, rest via socks
+  mkdir -p "$(dirname "$TUN_CONF")"
+  cat > "$TUN_CONF" <<EOF
+{
+  "log": {"level": "warn", "output": "$TUN_LOG", "timestamp": true},
+  "dns": {
+    "servers": [
+      {"tag": "proxy-dns", "address": "tcp://1.1.1.1", "detour": "socks-out"},
+      {"tag": "local-dns", "address": "local", "detour": "direct"}
+    ],
+    "rules": [
+      {"domain_suffix": ["ru", "su", "xn--p1ai", "flexchat.top"], "server": "local-dns"}
+    ],
+    "final": "proxy-dns",
+    "strategy": "prefer_ipv4"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+      "mtu": 1400,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "gvisor"
+    }
+  ],
+  "outbounds": [
+    {"type": "socks", "tag": "socks-out", "server": "127.0.0.1", "server_port": 1080},
+    {"type": "direct", "tag": "direct"},
+    {"type": "dns", "tag": "dns-out"}
+  ],
+  "route": {
+    "rules": [
+      {"inbound": "tun-in", "action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"network": "udp", "port": 443, "action": "reject"},
+      {"ip_is_private": true, "outbound": "direct"},
+      {"domain_suffix": ["ru", "su", "xn--p1ai", "flexchat.top"], "outbound": "direct"},
+      {"ip_cidr": ["166.1.2.48/32", "62.109.10.170/32"], "outbound": "direct"}
+    ],
+    "final": "socks-out",
+    "auto_detect_interface": true
+  }
+}
+EOF
+  chmod 644 "$TUN_CONF"  # root (sing-box) must be able to read it
+}
+
+tun_running() { pgrep -f 'bc-singbox run' >/dev/null 2>&1; }
+
+start_tun() { # returns 0 if TUN is up; needs sudo once (cached credentials ok)
+  ensure_singbox || { echo "WARN: sing-box unavailable ($TUN_LOG side); using PAC mode."; return 1; }
+  write_tun_conf
+  "$SINGBOX" check -c "$TUN_CONF" || { echo "WARN: TUN config invalid; using PAC mode."; return 1; }
+  if [[ "$(id -u)" -eq 0 ]]; then
+    :
+  elif ! sudo -n true 2>/dev/null; then
+    echo "==> TUN mode needs your sudo password (one time per session):"
+    sudo -v || { echo "WARN: no sudo — falling back to PAC mode."; return 1; }
+  fi
+  if [[ "$(id -u)" -eq 0 ]]; then
+    setsid nohup "$SINGBOX" run -c "$TUN_CONF" >>"$TUN_LOG" 2>&1 &
+  else
+    sudo -n -b sh -c "exec '$SINGBOX' run -c '$TUN_CONF' >>'$TUN_LOG' 2>&1"
+  fi
+  sleep 2
+  if tun_running; then
+    echo "==> TUN device up — ALL apps (including open browsers) now route via Turkey. No restarts."
+    return 0
+  fi
+  echo "WARN: TUN device did not come up (see $TUN_LOG); using PAC mode."
+  return 1
+}
+
+stop_tun() {
+  tun_running || return 0
+  if [[ "$(id -u)" -eq 0 ]] || sudo -n true 2>/dev/null; then
+    sudo -n pkill -TERM -f 'bc-singbox run' 2>/dev/null || pkill -TERM -f 'bc-singbox run'
+  else
+    echo "NOTE: run 'sudo pkill -f bc-singbox' to stop the TUN device."
+    return 1
+  fi
+  sleep 1
+  tun_running && return 1 || return 0
+}
+
 # --- actions ---------------------------------------------------------------
 connect() {
   echo "==> Starting tunnel to Turkey (166.1.2.48)…"
@@ -85,7 +200,16 @@ connect() {
   fi
   echo "==> Tunnel up. Egress IP: $ip"
 
-  echo "==> Setting SYSTEM-WIDE proxy (all browsers) to auto-config PAC…"
+  start_tun
+  if tun_running; then
+    echo
+    echo "CONNECTED (TUN) — everything routes via Turkey ($ip). No browser restarts needed."
+    echo "  Russian sites / LAN / flexchat.top remain DIRECT."
+    echo "  Turn off anytime:  bc-vpn disconnect"
+    return 0
+  fi
+
+  echo "==> Falling back to PAC mode (system proxy for browsers)…"
   # KDE/Plasma: PAC mode (ProxyType 2 = automatic config script)
   kset ProxyType 2
   kset "Proxy Config Script" "$PAC_URL"
@@ -97,14 +221,21 @@ connect() {
   ensure_chromium_pac
 
   echo
-  echo "CONNECTED — egress via Turkey ($ip)."
+  echo "CONNECTED (PAC) — egress via Turkey ($ip)."
   echo "  Russian sites / LAN / flexchat.top remain DIRECT."
   echo "  Browsers already open may need one restart to pick up the new proxy."
   echo "  Chromium: fully quit ALL windows and relaunch (launcher is PAC-wired)."
+  echo "  (For zero-restart routing run connect again inside a sudo shell.)"
   echo "  Turn off anytime:  bc-vpn disconnect"
 }
 
 disconnect() {
+  echo "==> Stopping TUN device (if any)…"
+  if stop_tun; then
+    echo "    TUN stopped."
+  else
+    echo "    TUN still running — see note above."
+  fi
   echo "==> Removing system proxy (back to direct)…"
   kset ProxyType 0
   kset "Proxy Config Script" ""
@@ -117,6 +248,11 @@ disconnect() {
 }
 
 status() {
+  if tun_running; then
+    echo "TUN device: UP — ALL apps route via Turkey (no restarts needed)"
+  else
+    echo "TUN device: down"
+  fi
   if ! tunnel_up; then
     echo "Tunnel: DOWN"
   else
