@@ -42,6 +42,29 @@ notify_kde() { # ask running KDE apps to re-read proxy config (best effort)
 
 tunnel_up() { ~/bin/bc-proxy status >/dev/null 2>&1; }
 
+CHROMIUM_DESKTOP_UPSTREAM=/var/lib/snapd/desktop/applications/chromium_chromium.desktop
+CHROMIUM_DESKTOP_LOCAL="$HOME/.local/share/applications/chromium_chromium.desktop"
+
+# Snap Chromium ignores the system proxy settings (gsettings PAC/manual and
+# KDE kioslaverc), so give its launcher the PAC explicitly. The PAC falls
+# back to DIRECT when the tunnel is off, so the override is safe to keep
+# installed permanently.
+ensure_chromium_pac() {
+  [[ -f "$CHROMIUM_DESKTOP_UPSTREAM" ]] || return 0
+  if [[ -f "$CHROMIUM_DESKTOP_LOCAL" ]] \
+     && grep -q -- "--proxy-pac-url=$PAC_URL" "$CHROMIUM_DESKTOP_LOCAL"; then
+    return 0
+  fi
+  mkdir -p "$HOME/.local/share/applications"
+  sed "s|^Exec=/snap/bin/chromium|Exec=/snap/bin/chromium --proxy-pac-url=$PAC_URL|" \
+    "$CHROMIUM_DESKTOP_UPSTREAM" > "$CHROMIUM_DESKTOP_LOCAL"
+}
+
+chromium_pac_installed() {
+  [[ -f "$CHROMIUM_DESKTOP_LOCAL" ]] \
+    && grep -q -- "--proxy-pac-url=$PAC_URL" "$CHROMIUM_DESKTOP_LOCAL"
+}
+
 egress() { # prints egress IP seen through the tunnel, or empty
   curl -s --max-time 15 --socks5-hostname 127.0.0.1:1080 https://api.ipify.org 2>/dev/null
 }
@@ -71,11 +94,13 @@ connect() {
   gsettings set org.gnome.system.proxy mode 'auto' 2>/dev/null || true
   gsettings set org.gnome.system.proxy autoconfig-url "$PAC_URL" 2>/dev/null || true
   notify_kde
+  ensure_chromium_pac
 
   echo
   echo "CONNECTED — egress via Turkey ($ip)."
   echo "  Russian sites / LAN / flexchat.top remain DIRECT."
   echo "  Browsers already open may need one restart to pick up the new proxy."
+  echo "  Chromium: fully quit ALL windows and relaunch (launcher is PAC-wired)."
   echo "  Turn off anytime:  bc-vpn disconnect"
 }
 
@@ -105,6 +130,9 @@ status() {
     *) echo "System proxy: custom mode ($pt) — bc-vpn did not set this" ;;
   esac
   [[ "$pt" == "2" ]] || echo "System proxy: OFF (direct)"
+  echo "Chromium launcher: $(chromium_pac_installed \
+    && echo 'PAC-wired (new windows follow the PAC)' \
+    || echo 'not wired — run: bc-vpn connect')"
   echo "All browsers: $( { [[ "$pt" == "2" ]] && tunnel_up; } && echo 'routing via Turkey' || echo 'direct / needs connect')"
 }
 
