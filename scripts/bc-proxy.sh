@@ -37,9 +37,9 @@ start() {
   # Clear stale pidfile and anything squatting on the port.
   rm -f "$PIDFILE"
   pkill -f "ssh .*-N -D 127.0.0.1:$PORT" 2>/dev/null
-  nohup bash -c '
+  setsid nohup bash -c '
     while true; do
-      ssh '"${SSH_OPTS[*]}"' && break
+      ssh '"${SSH_OPTS[*]}"' || true
       sleep 3
     done
   ' >>"$LOG" 2>&1 &
