@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# hiddify — one-command system-wide egress via the Turkey server.
+# bc-vpn — one-command system-wide egress via the Turkey server.
 #
-# Mimics the Hiddify experience: type `hiddify`, pick "Connect", and ALL
+# Mimics the Hiddify experience: type `bc-vpn`, pick "Connect", and ALL
 # browsers (Firefox/Chrome/Chromium — anything that follows the system proxy)
 # start routing through the Turkey exit (166.1.2.48) via the local SOCKS5
 # tunnel managed by ~/bin/bc-proxy.
@@ -9,13 +9,11 @@
 # Russian sites (*.ru/*.su/*.рф), the LAN, and flexchat.top stay DIRECT
 # (that logic lives in https://flexchat.top/proxy.pac).
 #
-# Usage: hiddify            # interactive menu
-#        hiddify connect|disconnect|status|ip
-#
-# Optional one-time (for `sudo hiddify`):
-#   sudo ln -sf /home/nikolas/bin/hiddify /usr/local/bin/hiddify
+# Usage: bc-vpn            # interactive menu
+#        bc-vpn connect|disconnect|status|ip
 # (Running it as root is never required — the script drops back to the
-# desktop user, because KDE/GNOME proxy settings are per-user.)
+# desktop user, because KDE/GNOME proxy settings are per-user. It does NOT
+# touch the `hiddify` app or any other proxy service on this machine.)
 set -u
 
 PAC_URL="https://flexchat.top/proxy.pac"
@@ -78,7 +76,7 @@ connect() {
   echo "CONNECTED — egress via Turkey ($ip)."
   echo "  Russian sites / LAN / flexchat.top remain DIRECT."
   echo "  Browsers already open may need one restart to pick up the new proxy."
-  echo "  Turn off anytime:  hiddify disconnect"
+  echo "  Turn off anytime:  bc-vpn disconnect"
 }
 
 disconnect() {
@@ -104,7 +102,7 @@ status() {
   case "$pt" in
     2) echo "System proxy: ON  (PAC $PAC_URL)" ;;
     0|""|2*) : ;;
-    *) echo "System proxy: custom mode ($pt) — hiddify did not set this" ;;
+    *) echo "System proxy: custom mode ($pt) — bc-vpn did not set this" ;;
   esac
   [[ "$pt" == "2" ]] || echo "System proxy: OFF (direct)"
   echo "All browsers: $( { [[ "$pt" == "2" ]] && tunnel_up; } && echo 'routing via Turkey' || echo 'direct / needs connect')"
@@ -115,12 +113,12 @@ ip() {
   if [[ -n "$ip" ]]; then
     echo "Websites see you as: $ip (Turkey exit)"
   else
-    echo "Tunnel not responding (run: hiddify connect)"
+    echo "Tunnel not responding (run: bc-vpn connect)"
   fi
 }
 
 menu() {
-  echo "================ hiddify (Turkey egress) ================"
+  echo "================ bc-vpn (Turkey egress) ================"
   status
   echo "---------------------------------------------------------"
   echo "  1) Connect    (all browsers -> Turkey)"
@@ -144,5 +142,5 @@ case "${1:-menu}" in
   status)     status ;;
   ip)         ip ;;
   menu|"")    menu ;;
-  *) echo "usage: hiddify [connect|disconnect|status|ip]"; exit 2 ;;
+  *) echo "usage: bc-vpn [connect|disconnect|status|ip]"; exit 2 ;;
 esac
