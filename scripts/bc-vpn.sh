@@ -111,7 +111,7 @@ write_tun_conf() { # config mirroring the PAC: RU/LAN/flexchat direct, rest via 
       {"domain_suffix": ["ru", "su", "xn--p1ai", "flexchat.top"], "server": "local-dns"}
     ],
     "final": "proxy-dns",
-    "strategy": "prefer_ipv4"
+    "strategy": "ipv4_only"
   },
   "inbounds": [
     {
@@ -120,7 +120,7 @@ write_tun_conf() { # config mirroring the PAC: RU/LAN/flexchat direct, rest via 
       "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
       "mtu": 1400,
       "auto_route": true,
-      "strict_route": false,
+      "strict_route": true,
       "stack": "gvisor"
     }
   ],
@@ -133,7 +133,7 @@ write_tun_conf() { # config mirroring the PAC: RU/LAN/flexchat direct, rest via 
     "rules": [
       {"inbound": "tun-in", "action": "sniff"},
       {"protocol": "dns", "action": "hijack-dns"},
-      {"network": "udp", "port": 443, "action": "reject"},
+      {"network": "udp", "port": [443, 3478, 3479, 5349, 19302, 19305], "action": "reject"},
       {"ip_is_private": true, "outbound": "direct"},
       {"domain_suffix": ["ru", "su", "xn--p1ai", "flexchat.top"], "outbound": "direct"},
       {"ip_cidr": ["166.1.2.48/32", "62.109.10.170/32"], "outbound": "direct"}
