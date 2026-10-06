@@ -2,9 +2,9 @@
 # E2E health checks for the RU relay -> main exit VPN chain.
 # Usage: ./e2e-test.sh            (defaults below, or pass hosts as args)
 #        ./e2e-test.sh root@RELAY_IP root@MAIN_IP
-# Password auth (no key setup needed):
-#        RELAY_PASS=... MAIN_PASS=... ./e2e-test.sh root@RELAY_IP root@MAIN_IP
-# Key auth keeps working when the PASS vars are unset.
+# Password auth was removed on both servers (2026-10-06 hardening,
+# PasswordAuthentication no): key auth is the only mode now — the PASS vars
+# below are kept only for historical/local-VM use.
 set -u
 RELAY=${1:-root@RELAY_IP}
 MAIN=${2:-root@MAIN_IP}
