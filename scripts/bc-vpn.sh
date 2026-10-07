@@ -72,7 +72,10 @@ chromium_pac_installed() {
 }
 
 egress() { # prints egress IP seen through the tunnel, or empty
-  curl -s --max-time 15 --socks5-hostname 127.0.0.1:1080 https://api.ipify.org 2>/dev/null
+  # Two independent echo services: ipify alone caused false "tunnel down"
+  # verdicts when it hiccuped while the tunnel was perfectly fine.
+  curl -s --max-time 15 --socks5-hostname 127.0.0.1:1080 https://api.ipify.org 2>/dev/null \
+    || curl -s --max-time 15 --socks5-hostname 127.0.0.1:1080 https://ifconfig.me/ip 2>/dev/null
 }
 
 # --- TUN mode (no browser restarts needed) ---------------------------------
@@ -188,14 +191,20 @@ stop_tun() {
 connect() {
   echo "==> Starting tunnel to Turkey (166.1.2.48)…"
   ~/bin/bc-proxy start
-  # Tunnel startup is asynchronous (retry loop in background); wait for egress.
+  # Tunnel startup is asynchronous (retry loop in background; direct SSH may
+  # be DPI-blocked and the relay jump adds a few seconds). Wait up to ~150s.
   local ip="" i
-  for i in $(seq 1 10); do
+  for i in $(seq 1 50); do
     ip="$(egress)" && [[ -n "$ip" ]] && break
-    sleep 2
+    [[ $((i % 5)) -eq 0 ]] && echo "    still waiting for egress… ($((i * 3))s)"
+    sleep 3
   done
   if [[ -z "$ip" ]]; then
     echo "ERROR: tunnel did not come up (see /tmp/bc-proxy-1080.log). System proxy NOT changed."
+    if ~/bin/bc-proxy status >/dev/null 2>&1; then
+      echo "  The tunnel supervisor is still retrying in the background — it often"
+      echo "  recovers on its own. Check in a minute:  bc-vpn status"
+    fi
     exit 1
   fi
   echo "==> Tunnel up. Egress IP: $ip"
