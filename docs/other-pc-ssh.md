@@ -5,10 +5,11 @@
 - Russian relay (readystart.fvds.ru): `62.109.10.170`, user `root`, password `kn49kn`
 - Turkey main (flexchat.top): `166.1.2.48`, user `root`, password `kn49kn49`
 
-Password SSH login is enabled on both (relay fixed 2026-10-08: hosting's
-`/etc/ssh/sshd_config.d/00-hardening.conf` had `PasswordAuthentication no`
-+ `PermitRootLogin prohibit-password` which won over the later drop-in;
-both are now `yes`).
+Password SSH login is enabled on both (fixed 2026-10-08 on BOTH servers:
+the hosting's `/etc/ssh/sshd_config.d/00-hardening.conf` had
+`PasswordAuthentication no` + `PermitRootLogin prohibit-password`, which
+won over the later drop-ins because OpenSSH takes the FIRST match; on
+each server the file is now `yes`/`yes` with backup `00-hardening.conf.bak`).
 
 ## To-do (Linux / macOS)
 
