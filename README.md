@@ -1,11 +1,14 @@
 # vpn
 
-> **STATUS (2026-10-05): VPN REMOVED.** Services stopped and disabled on both
-> servers (`xray` + `sing-box-client` on the relay, `xray-main` on main).
-> Configs archived at `/root/vpn-removed-backup-20261005/` on each server.
-> The phone's v2rayTun app was uninstalled. Everything below is the rebuild
-> runbook — the full chain was verified working (e2e passed=6) right before
-> removal, so it can be stood up again as-is.
+> **STATUS (2026-10-08): RESTORED for the phone.** The chain was stood back up
+> from the archived configs (see Rebuild procedure below). One change vs the
+> pre-removal layout: the relay's phone-facing xray inbound moved **443 → 8443**
+> because Apache/Nextcloud now owns :443 on the relay. ufw allows 8443/tcp on
+> the relay. Phone client: v2rayTun, profile `flexchat-vpn-turkey` (real values
+> server-side only). Verified: phone browser exits as the main exit IP, RU sites
+> direct, OpenRouter reachable (no WAF 403).
+> An earlier removal note (2026-10-05) is obsolete; configs remain archived at
+> `/root/vpn-removed-backup-20261005/` on each server.
 
 VPN-style forwarding chain: RU relay → foreign exit on the main server. Phone/PC clients connect to the **relay** (existing config, unchanged); all traffic except Nextcloud exits through the **main server**.
 
@@ -18,7 +21,7 @@ Camouflage domains are placeholders here (the relay camo domain is fictional); t
 phone / PC (vless+REALITY client, params unchanged)
    │
    ▼
-RU relay (<RELAY_IP>) — xray :443  [phone-facing inbound, vless+REALITY]
+RU relay (<RELAY_IP>) — xray :8443  [phone-facing inbound, vless+REALITY; :443 is Apache/Nextcloud]
    │  routing: <RELAY_IP> → direct (Nextcloud local/fast)
    │           RU sites (geosite:category-ru / geoip:ru) → direct (RU speed)
    │           everything else → outbound "to-main"
@@ -40,7 +43,7 @@ The RU relay is a temporary, cost-driven hop — see Migration runbooks below fo
 
 | Server | Role | Binary | Version | Port | Unit |
 |---|---|---|---|---|---|
-| relay (Ubuntu 26.04.1) | phone-facing inbound + router | xray | 25.12.8 | 443 | `xray` |
+| relay (Ubuntu 26.04.1) | phone-facing inbound + router | xray | 25.12.8 | 8443 | `xray` |
 | relay | bridge → main exit | sing-box | 1.12.14 | 127.0.0.1:10809 | `sing-box-client` |
 | main (Ubuntu 26.04.1) | foreign exit | xray | 26.3.27 | 39443 | `xray-main` |
 
@@ -100,7 +103,10 @@ Camouflage: relay inbound dest/SNI `<CAMO_RELAY_DOMAIN>:443` (placeholder); main
      ```
 3. Fill the placeholders in the configs, copy to the paths above, `systemctl daemon-reload && systemctl enable --now xray sing-box-client` (relay) / `xray-main` (main).
 4. Relay routing rule: `{"type":"field","ip":["<RELAY_IP>"],"outboundTag":"direct"}` keeps Nextcloud local. Main routing rule pins its own IP to `direct` (loop protection).
-5. Firewall: relay open 80,443 (8000 for batch-chat when applicable); main open 22,443,39443,8000.
+5. Firewall: relay open 80,443,8443 (8000 for batch-chat when applicable); main open 22,443,39443,8000.
+   NOTE: the relay's `Listen 8443` lines in `/etc/apache2/ports.conf` must NOT
+   exist — Apache would steal the xray port (this caused a real outage on
+   2026-10-08; xray then fails with `bind: address already in use`).
 
 ## Split routing — Russian sites go direct (added 2026-09-19)
 
@@ -151,7 +157,9 @@ Desktop browsers work the same through the PC client.
 curl -s --socks5-hostname 127.0.0.1:10809 --max-time 12 https://api.ipify.org    # (run on the relay)
 ssh relay 'curl -s --socks5-hostname 127.0.0.1:10809 --max-time 12 https://api.ipify.org'
 
-# full chain: temp vless client on relay (socks :10808) pointed at relay:443 with PHONE_* params
+# full chain: temp vless client on relay (socks :10808) pointed at relay:8443 with PHONE_* params
+#   (client user must NOT set flow — the relay inbound user has none; a flow mismatch
+#    fails with "account ... is not able to use the flow xtls-rprx-vision")
 # config recipe in scripts/e2e-test.sh comments; expect exit MAIN_IP and flexchat.top/health = 200
 ./scripts/e2e-test.sh
 ```
