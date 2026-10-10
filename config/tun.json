@@ -3,7 +3,7 @@
   "dns": {
     "servers": [
       {"tag": "proxy-dns", "address": "tcp://1.1.1.1", "detour": "socks-out"},
-      {"tag": "local-dns", "address": "local", "detour": "direct"}
+      {"tag": "local-dns", "address": "udp://77.88.8.8", "detour": "direct"}
     ],
     "rules": [
       {"domain_suffix": ["ru", "su", "xn--p1ai", "flexchat.top"], "server": "local-dns"}
