@@ -101,6 +101,16 @@ ensure_singbox() { # download pinned sing-box via our own tunnel if absent
 }
 
 write_tun_conf() { # config mirroring the PAC: RU/LAN/flexchat direct, rest via socks
+  # NOTE: local-dns must NOT be "local" (system resolver) — resolved sends .ru
+  # queries back to sing-box's tun DNS (172.19.0.2), creating a DNS loop.
+  # Dial the router/gateway directly instead; auto-detected per network.
+  local gw="${BC_ROUTER_DNS:-$(ip route show default | awk '{print $3; exit}')}"
+  # Sanity: a corrupted/empty gw silently breaks ALL direct-domain DNS (.ru etc).
+  if ! [[ "$gw" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    echo "ERROR: bad gateway DNS '$gw' — refusing to write broken tun config." >&2
+    echo "       Fix: run 'ip route show default' or set BC_ROUTER_DNS=192.168.x.1" >&2
+    return 1
+  fi
   mkdir -p "$(dirname "$TUN_CONF")"
   cat > "$TUN_CONF" <<EOF
 {
@@ -108,7 +118,7 @@ write_tun_conf() { # config mirroring the PAC: RU/LAN/flexchat direct, rest via 
   "dns": {
     "servers": [
       {"tag": "proxy-dns", "address": "tcp://1.1.1.1", "detour": "socks-out"},
-      {"tag": "local-dns", "address": "local", "detour": "direct"}
+      {"tag": "local-dns", "address": "udp://$gw", "detour": "direct"}
     ],
     "rules": [
       {"domain_suffix": ["ru", "su", "xn--p1ai", "flexchat.top"], "server": "local-dns"}
