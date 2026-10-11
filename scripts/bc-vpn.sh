@@ -112,12 +112,21 @@ write_tun_conf() { # config mirroring the PAC: RU/LAN/flexchat direct, rest via 
     return 1
   fi
   mkdir -p "$(dirname "$TUN_CONF")"
+  # Upstream (recursive) resolver reached through the tunnel. Default: 1.1.1.1
+  # via socks-out. Own resolver (Unbound on the Turkey server, port 5353,
+  # allowlisted to the two servers only): BC_PROXY_DNS='tcp://166.1.2.48:5353'
+  # — deployed by dns repo's deploy/install-unbound.sh.
+  local pdns="${BC_PROXY_DNS:-tcp://1.1.1.1}"
+  if ! [[ "$pdns" =~ ^(tcp|udp|tls|https)://[A-Za-z0-9.:-]+$ ]]; then
+    echo "ERROR: bad BC_PROXY_DNS '$pdns' — refusing to write broken tun config." >&2
+    return 1
+  fi
   cat > "$TUN_CONF" <<EOF
 {
   "log": {"level": "warn", "output": "$TUN_LOG", "timestamp": true},
   "dns": {
     "servers": [
-      {"tag": "proxy-dns", "address": "tcp://1.1.1.1", "detour": "socks-out"},
+      {"tag": "proxy-dns", "address": "$pdns", "detour": "socks-out"},
       {"tag": "local-dns", "address": "udp://$gw", "detour": "direct"}
     ],
     "rules": [
