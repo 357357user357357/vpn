@@ -24,6 +24,19 @@ set -u
 
 PAC_URL="https://flexchat.top/proxy.pac"
 
+# --- TUN transport -----------------------------------------------------------
+# direct : native VLESS+Reality straight to the VPN server (default) — same
+#          wire format as the phone's Hiddify link; no SSH tunnel, no relay.
+# tunnel : legacy path via local SOCKS5 127.0.0.1:1080 (bc-proxy SSH forward).
+BC_TUN_TRANSPORT="${BC_TUN_TRANSPORT:-direct}"
+BC_VLESS_SERVER="${BC_VLESS_SERVER:-166.1.2.48}"
+BC_VLESS_PORT="${BC_VLESS_PORT:-39443}"
+BC_VLESS_UUID="${BC_VLESS_UUID:-4bdc7469-6b49-4481-833a-5cbfe4a2add0}"
+BC_VLESS_SNI="${BC_VLESS_SNI:-flexchat.top}"
+BC_VLESS_PUBLIC_KEY="${BC_VLESS_PUBLIC_KEY:-NeRzb3VtFa9Z7ZW_ziwlwcggZ15Hwngjm-0YshLiIxA}"
+BC_VLESS_SHORT_ID="${BC_VLESS_SHORT_ID:-85b45f16}"
+BC_VLESS_FP="${BC_VLESS_FP:-chrome}"
+
 # If launched with sudo, re-exec as the real desktop user (proxy settings
 # and the ssh key live in that user's session/home).
 if [[ "$(id -u)" -eq 0 && -n "${SUDO_USER:-}" ]]; then
@@ -104,7 +117,7 @@ write_tun_conf() { # config mirroring the PAC: RU/LAN/flexchat direct, rest via 
   # NOTE: local-dns must NOT be "local" (system resolver) — resolved sends .ru
   # queries back to sing-box's tun DNS (172.19.0.2), creating a DNS loop.
   # Dial the router/gateway directly instead; auto-detected per network.
-  local gw="${BC_ROUTER_DNS:-$(ip route show default | awk '{print $3; exit}')}"
+  local gw="${BC_ROUTER_DNS:-$(command ip route show default | awk '{print $3; exit}')}"
   # Sanity: a corrupted/empty gw silently breaks ALL direct-domain DNS (.ru etc).
   if ! [[ "$gw" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
     echo "ERROR: bad gateway DNS '$gw' — refusing to write broken tun config." >&2
@@ -113,20 +126,29 @@ write_tun_conf() { # config mirroring the PAC: RU/LAN/flexchat direct, rest via 
   fi
   mkdir -p "$(dirname "$TUN_CONF")"
   # Upstream (recursive) resolver reached through the tunnel. Default: 1.1.1.1
-  # via socks-out. Own resolver (Unbound on the Turkey server, port 5353,
-  # allowlisted to the two servers only): BC_PROXY_DNS='tcp://166.1.2.48:5353'
+  # via the active outbound. Own resolver (Unbound on the Turkey server, port
+  # 5353, allowlisted to the two servers only): BC_PROXY_DNS='tcp://166.1.2.48:5353'
   # — deployed by dns repo's deploy/install-unbound.sh.
   local pdns="${BC_PROXY_DNS:-tcp://1.1.1.1}"
   if ! [[ "$pdns" =~ ^(tcp|udp|tls|https)://[A-Za-z0-9.:-]+$ ]]; then
     echo "ERROR: bad BC_PROXY_DNS '$pdns' — refusing to write broken tun config." >&2
     return 1
   fi
+  # Active outbound: native VLESS+Reality (direct) or bc-proxy SOCKS (tunnel).
+  local out_line out_tag
+  if [[ "$BC_TUN_TRANSPORT" == "tunnel" ]]; then
+    out_tag="socks-out"
+    out_line='{"type": "socks", "tag": "socks-out", "server": "127.0.0.1", "server_port": 1080}'
+  else
+    out_tag="vless-out"
+    out_line="{\"type\": \"vless\", \"tag\": \"vless-out\", \"server\": \"$BC_VLESS_SERVER\", \"server_port\": $BC_VLESS_PORT, \"uuid\": \"$BC_VLESS_UUID\", \"tls\": {\"enabled\": true, \"server_name\": \"$BC_VLESS_SNI\", \"utls\": {\"enabled\": true, \"fingerprint\": \"$BC_VLESS_FP\"}, \"reality\": {\"enabled\": true, \"public_key\": \"$BC_VLESS_PUBLIC_KEY\", \"short_id\": \"$BC_VLESS_SHORT_ID\"}}}"
+  fi
   cat > "$TUN_CONF" <<EOF
 {
   "log": {"level": "warn", "output": "$TUN_LOG", "timestamp": true},
   "dns": {
     "servers": [
-      {"tag": "proxy-dns", "address": "$pdns", "detour": "socks-out"},
+      {"tag": "proxy-dns", "address": "$pdns", "detour": "$out_tag"},
       {"tag": "local-dns", "address": "udp://$gw", "detour": "direct"}
     ],
     "rules": [
@@ -147,7 +169,7 @@ write_tun_conf() { # config mirroring the PAC: RU/LAN/flexchat direct, rest via 
     }
   ],
   "outbounds": [
-    {"type": "socks", "tag": "socks-out", "server": "127.0.0.1", "server_port": 1080},
+    $out_line,
     {"type": "direct", "tag": "direct"},
     {"type": "dns", "tag": "dns-out"}
   ],
@@ -158,9 +180,9 @@ write_tun_conf() { # config mirroring the PAC: RU/LAN/flexchat direct, rest via 
       {"network": "udp", "port": [443, 3478, 3479, 5349, 19302, 19305], "action": "reject"},
       {"ip_is_private": true, "outbound": "direct"},
       {"domain_suffix": ["ru", "su", "xn--p1ai", "flexchat.top"], "outbound": "direct"},
-      {"ip_cidr": ["166.1.2.48/32", "62.109.10.170/32"], "outbound": "direct"}
+      {"ip_cidr": ["$BC_VLESS_SERVER/32", "62.109.10.170/32"], "outbound": "direct"}
     ],
-    "final": "socks-out",
+    "final": "$out_tag",
     "auto_detect_interface": true
   }
 }
@@ -300,7 +322,7 @@ status() {
   echo "All browsers: $( { [[ "$pt" == "2" ]] && tunnel_up; } && echo 'routing via Turkey' || echo 'direct / needs connect')"
 }
 
-ip() {
+cmd_ip() {
   local ip; ip="$(egress)"
   if [[ -n "$ip" ]]; then
     echo "Websites see you as: $ip (Turkey exit)"
@@ -332,7 +354,7 @@ case "${1:-menu}" in
   connect)    connect ;;
   disconnect) disconnect ;;
   status)     status ;;
-  ip)         ip ;;
+  ip)         cmd_ip ;;
   menu|"")    menu ;;
   *) echo "usage: bc-vpn [connect|disconnect|status|ip]"; exit 2 ;;
 esac
